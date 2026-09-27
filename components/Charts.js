@@ -7,6 +7,7 @@ import { HABITS, habitTally, getPeriodRange } from "@/lib/data";
 export function HabitBarChart({ rows, period = "bulanan" }) {
   const range = getPeriodRange(period);
   const chartData = HABITS.map((h) => {
+    if (rows.length === 0) return { name: h.label.split(" ")[0], pct: 0 };
     const total = rows.reduce((acc, r) => acc + habitTally(r.month, h.id, range.days), 0);
     const pct = Math.round((total / (rows.length * range.total)) * 100);
     return { name: h.label.split(" ")[0], pct };

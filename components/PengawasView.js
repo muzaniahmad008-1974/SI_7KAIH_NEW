@@ -1,18 +1,23 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { School, Eye, Lock, Sparkles, Loader2 } from "lucide-react";
-import { Card, SectionTitle, Chip, GhostButton, AIInsightBlock, C } from "./ui";
+import { School, Eye, Lock, Sparkles, Loader2, Plus, Pencil, X, Check } from "lucide-react";
+import { Card, SectionTitle, Chip, GhostButton, PrimaryButton, AIInsightBlock, C } from "./ui";
 import ClassTable from "./ClassTable";
 import { HabitBarChart, SchoolCompareChart } from "./Charts";
 import { getData, setData } from "@/lib/clientStorage";
 import { askAI } from "@/lib/clientAi";
-import { HABITS, SCHOOLS, CLASSES, STUDENTS, habitTally, monthKeyFor, journalKey, pendampinganKey, ambangModeKey } from "@/lib/data";
+import {
+  HABITS, SCHOOLS, CLASSES, STUDENTS, habitTally, monthKeyFor, journalKey,
+  pendampinganKey, ambangModeKey, extraSchoolsKey, schoolOverridesKey,
+} from "@/lib/data";
 
 export default function PengawasView({ onLogout }) {
   const monthKey = monthKeyFor();
-  const [allData, setAllData] = useState(null);
   const [ambangMode, setAmbangMode] = useState("ketat");
+  const [extraSchools, setExtraSchools] = useState(null);
+  const [schoolOverrides, setSchoolOverrides] = useState(null);
+  const [allData, setAllData] = useState(null);
   const [focusSchool, setFocusSchool] = useState(null);
   const [revealReason, setRevealReason] = useState("");
   const [revealed, setRevealed] = useState(false);
@@ -21,20 +26,45 @@ export default function PengawasView({ onLogout }) {
   const [draftingP, setDraftingP] = useState(false);
   const [draftingCatatan, setDraftingCatatan] = useState(false);
 
+  const [showSchoolForm, setShowSchoolForm] = useState(false);
+  const [newSchoolName, setNewSchoolName] = useState("");
+  const [editingSchoolId, setEditingSchoolId] = useState(null);
+  const [editSchoolName, setEditSchoolName] = useState("");
+
+  // Load ambang + the pengawas's own school-list edits first.
   useEffect(() => {
     let alive = true;
     (async () => {
-      const ambang = await getData(ambangModeKey(), "ketat");
-      const perSchool = await Promise.all(SCHOOLS.map(async (s) => {
-        const cls = CLASSES.find((c) => c.schoolId === s.id);
-        const students = STUDENTS.filter((st) => st.classId === cls.id);
-        const months = await Promise.all(students.map((st) => getData(journalKey(st.id, monthKey), {})));
-        return { school: s, cls, rows: students.map((st, i) => ({ student: st, month: months[i] })) };
-      }));
-      if (alive) { setAmbangMode(ambang); setAllData(perSchool); }
+      const [ambang, extra, overrides] = await Promise.all([
+        getData(ambangModeKey(), "ketat"),
+        getData(extraSchoolsKey(), []),
+        getData(schoolOverridesKey(), {}),
+      ]);
+      if (alive) { setAmbangMode(ambang); setExtraSchools(extra); setSchoolOverrides(overrides); }
     })();
     return () => { alive = false; };
   }, []);
+
+  const allSchools = useMemo(() => {
+    if (!extraSchools || !schoolOverrides) return null;
+    return [...SCHOOLS, ...extraSchools].map((s) => ({ ...s, name: schoolOverrides[s.id] || s.name }));
+  }, [extraSchools, schoolOverrides]);
+
+  // Once the school list is known, load each school's class/student/journal data.
+  useEffect(() => {
+    if (!allSchools) return;
+    let alive = true;
+    (async () => {
+      const perSchool = await Promise.all(allSchools.map(async (s) => {
+        const cls = CLASSES.find((c) => c.schoolId === s.id); // may be undefined for a newly added school
+        const students = cls ? STUDENTS.filter((st) => st.classId === cls.id) : [];
+        const months = await Promise.all(students.map((st) => getData(journalKey(st.id, monthKey), {})));
+        return { school: s, cls, rows: students.map((st, i) => ({ student: st, month: months[i] })) };
+      }));
+      if (alive) setAllData(perSchool);
+    })();
+    return () => { alive = false; };
+  }, [allSchools]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!focusSchool) return;
@@ -44,6 +74,7 @@ export default function PengawasView({ onLogout }) {
 
   const daysSoFar = new Date().getDate() - 1 || 1;
   const schoolStat = (rows) => {
+    if (rows.length === 0) return 0;
     let doneTotal = 0, possible = 0;
     rows.forEach((r) => HABITS.forEach((h) => { possible++; doneTotal += habitTally(r.month, h.id) / daysSoFar; }));
     return Math.round((doneTotal / possible) * 100);
@@ -54,6 +85,26 @@ export default function PengawasView({ onLogout }) {
     const summary = allData.map((d) => `${d.school.name}: kelengkapan ${schoolStat(d.rows)}%`).join("; ");
     return `Pengawas membina ${allData.length} sekolah dengan ringkasan kelengkapan pembiasaan: ${summary}. Balas HANYA JSON: {"temuan":"...","pola":"...","rekomendasi":"..."} untuk pengawas pembina, sertakan sekolah mana yang perlu diverifikasi lebih lanjut tanpa menuduh gagal.`;
   }, [allData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const addSchool = async () => {
+    if (!newSchoolName.trim()) return;
+    const next = [...extraSchools, { id: "sek-" + Date.now(), name: newSchoolName.trim() }];
+    setExtraSchools(next);
+    await setData(extraSchoolsKey(), next);
+    setNewSchoolName("");
+    setShowSchoolForm(false);
+  };
+
+  const startEditSchool = (s) => { setEditingSchoolId(s.id); setEditSchoolName(s.name); };
+  const cancelEditSchool = () => { setEditingSchoolId(null); setEditSchoolName(""); };
+
+  const saveEditSchool = async () => {
+    if (!editSchoolName.trim()) return;
+    const next = { ...schoolOverrides, [editingSchoolId]: editSchoolName.trim() };
+    setSchoolOverrides(next);
+    await setData(schoolOverridesKey(), next);
+    cancelEditSchool();
+  };
 
   const addPendampingan = async () => {
     if (!pForm.temuan.trim()) return;
@@ -66,7 +117,7 @@ export default function PengawasView({ onLogout }) {
   const aiDraftCatatan = async () => {
     setDraftingCatatan(true);
     try {
-      const schoolName = SCHOOLS.find((s) => s.id === focusSchool)?.name;
+      const schoolName = allSchools.find((s) => s.id === focusSchool)?.name;
       const draft = await askAI(`Sebagai pengawas pembina, saya menemukan: "${pForm.temuan}" di ${schoolName}. Susun draf singkat (2-3 kalimat) catatan pendampingan yang mendeskripsikan kondisi sekolah dan proses pendampingan, nada membimbing bukan menghakimi, tanpa menyimpulkan sebab pasti sebelum diverifikasi. Balas hanya draf catatannya.`);
       setPForm((f) => ({ ...f, catatan: draft }));
     } catch (e) { /* silent */ } finally { setDraftingCatatan(false); }
@@ -75,11 +126,13 @@ export default function PengawasView({ onLogout }) {
   const aiDraftRTL = async () => {
     setDraftingP(true);
     try {
-      const schoolName = SCHOOLS.find((s) => s.id === focusSchool)?.name;
+      const schoolName = allSchools.find((s) => s.id === focusSchool)?.name;
       const draft = await askAI(`Sebagai pengawas pembina, saya menemukan: "${pForm.temuan}" di ${schoolName}. Susun draf singkat (2 kalimat) rencana tindak lanjut yang konkret dan bisa disepakati bersama kepala sekolah, dengan target terukur. Balas hanya draf rencananya.`);
       setPForm((f) => ({ ...f, rencana: draft }));
     } catch (e) { /* silent */ } finally { setDraftingP(false); }
   };
+
+  const loading = !allSchools || !allData;
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6">
@@ -91,10 +144,40 @@ export default function PengawasView({ onLogout }) {
         <button onClick={onLogout} className="text-[12.5px] font-semibold" style={{ color: C.brick }}>Keluar</button>
       </div>
 
-      {!allData ? (
+      {loading ? (
         <div className="py-10 text-center" style={{ color: C.sub }}><Loader2 className="animate-spin inline" /> Memuat data sekolah binaan...</div>
       ) : (
         <div className="space-y-4">
+          <Card>
+            <SectionTitle title="Kelola Sekolah Binaan" right={!showSchoolForm && <GhostButton icon={Plus} onClick={() => setShowSchoolForm(true)}>Tambah Sekolah</GhostButton>} />
+            <div className="space-y-1.5 mb-2">
+              {allSchools.map((s) => (
+                <div key={s.id} className="flex items-center justify-between gap-2 rounded-xl px-3 py-2" style={{ background: "#EFEAD9" }}>
+                  {editingSchoolId === s.id ? (
+                    <>
+                      <input value={editSchoolName} onChange={(e) => setEditSchoolName(e.target.value)} className="flex-1 min-w-0 rounded-lg px-2 py-1 text-[13px]" style={{ border: `1px solid ${C.line}` }} autoFocus />
+                      <button onClick={saveEditSchool} title="Simpan" className="w-7 h-7 rounded-full flex items-center justify-center shrink-0" style={{ background: "white" }}><Check size={13} color={C.green} /></button>
+                      <button onClick={cancelEditSchool} title="Batal" className="w-7 h-7 rounded-full flex items-center justify-center shrink-0" style={{ background: "white" }}><X size={13} color={C.brick} /></button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-[13px] font-medium flex-1 min-w-0" style={{ color: C.ink }}>{s.name}</span>
+                      <button onClick={() => startEditSchool(s)} title="Edit nama sekolah" className="w-7 h-7 rounded-full flex items-center justify-center shrink-0" style={{ background: "white" }}><Pencil size={13} color={C.blueDeep} /></button>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+            {showSchoolForm && (
+              <div className="flex items-center gap-2 mt-2">
+                <input value={newSchoolName} onChange={(e) => setNewSchoolName(e.target.value)} placeholder="Nama sekolah baru" className="flex-1 min-w-0 rounded-lg px-2.5 py-2 text-[13px]" style={{ border: `1px solid ${C.line}` }} autoFocus />
+                <PrimaryButton icon={Plus} onClick={addSchool}>Simpan</PrimaryButton>
+                <GhostButton icon={X} onClick={() => { setShowSchoolForm(false); setNewSchoolName(""); }}>Batal</GhostButton>
+              </div>
+            )}
+            <p className="text-[11px] mt-2" style={{ color: C.sub }}>Sekolah yang baru ditambahkan belum punya data kelas/murid — lengkapi lewat dashboard Admin Sekolah.</p>
+          </Card>
+
           <div className="grid sm:grid-cols-2 gap-3">
             {allData.map(({ school, rows }) => {
               const pct = schoolStat(rows);
@@ -124,7 +207,7 @@ export default function PengawasView({ onLogout }) {
               {allData.map(({ school, rows }) => (
                 <div key={school.id}>
                   <div className="text-[12.5px] font-semibold mb-1.5" style={{ color: C.ink }}>{school.name}</div>
-                  <HabitBarChart rows={rows} />
+                  {rows.length > 0 ? <HabitBarChart rows={rows} /> : <p className="text-[12px]" style={{ color: C.sub }}>Belum ada data murid.</p>}
                 </div>
               ))}
             </div>
@@ -136,7 +219,7 @@ export default function PengawasView({ onLogout }) {
             <>
               <Card>
                 <SectionTitle
-                  title={`Rekap Kelas \u2014 ${SCHOOLS.find((s) => s.id === focusSchool).name}`}
+                  title={`Rekap Kelas \u2014 ${allSchools.find((s) => s.id === focusSchool).name}`}
                   right={!revealed ? (
                     <div className="flex items-center gap-2">
                       <input value={revealReason} onChange={(e) => setRevealReason(e.target.value)} placeholder="Alasan pendampingan..." className="rounded-lg px-2.5 py-1.5 text-[12.5px]" style={{ border: `1px solid ${C.line}` }} />
@@ -144,7 +227,12 @@ export default function PengawasView({ onLogout }) {
                     </div>
                   ) : <Chip tone="blue"><Lock size={11} /> Dibuka: {revealReason}</Chip>}
                 />
-                <ClassTable rows={allData.find((d) => d.school.id === focusSchool).rows} ambangMode={ambangMode} revealed={revealed} />
+                {(() => {
+                  const focusRows = allData.find((d) => d.school.id === focusSchool).rows;
+                  return focusRows.length > 0
+                    ? <ClassTable rows={focusRows} ambangMode={ambangMode} revealed={revealed} />
+                    : <p className="text-[13px]" style={{ color: C.sub }}>Sekolah ini belum punya data kelas/murid.</p>;
+                })()}
               </Card>
 
               <Card>

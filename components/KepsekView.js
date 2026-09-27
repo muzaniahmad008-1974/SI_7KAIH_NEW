@@ -9,6 +9,7 @@ import { askAI } from "@/lib/clientAi";
 import {
   HABITS, HABIT_MAP, CLASSES, SCHOOLS, STUDENTS,
   habitTally, getPeriodRange, monthKeyFor, journalKey, programsKey, ambangModeKey,
+  extraSchoolsKey, schoolOverridesKey,
 } from "@/lib/data";
 
 export default function KepsekView({ schoolId: initialSchoolId, onLogout }) {
@@ -21,9 +22,20 @@ export default function KepsekView({ schoolId: initialSchoolId, onLogout }) {
   const [editingId, setEditingId] = useState(null);
   const [suggestions, setSuggestions] = useState(null);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [extraSchools, setExtraSchools] = useState([]);
+  const [schoolOverrides, setSchoolOverrides] = useState({});
 
+  const allSchools = useMemo(
+    () => [...SCHOOLS, ...extraSchools].map((s) => ({ ...s, name: schoolOverrides[s.id] || s.name })),
+    [extraSchools, schoolOverrides]
+  );
   const cls = CLASSES.find((c) => c.schoolId === schoolId);
-  const school = SCHOOLS.find((s) => s.id === schoolId);
+  const school = allSchools.find((s) => s.id === schoolId) || SCHOOLS[0];
+
+  useEffect(() => {
+    getData(extraSchoolsKey(), []).then(setExtraSchools);
+    getData(schoolOverridesKey(), {}).then(setSchoolOverrides);
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -32,7 +44,7 @@ export default function KepsekView({ schoolId: initialSchoolId, onLogout }) {
       const [ambang, progs, students] = await Promise.all([
         getData(ambangModeKey(), "ketat"),
         getData(programsKey(schoolId), []),
-        STUDENTS.filter((s) => s.classId === cls.id),
+        cls ? STUDENTS.filter((s) => s.classId === cls.id) : [],
       ]);
       const months = await Promise.all(students.map((s) => getData(journalKey(s.id, monthKey), {})));
       if (!alive) return;
@@ -71,6 +83,7 @@ export default function KepsekView({ schoolId: initialSchoolId, onLogout }) {
 
   const statsText = useMemo(() => {
     if (!rows) return "";
+    if (rows.length === 0) return "belum ada data murid";
     const range = getPeriodRange("bulanan");
     return HABITS.map((h) => {
       const total = rows.reduce((a, r) => a + habitTally(r.month, h.id, range.days), 0);
@@ -112,7 +125,7 @@ export default function KepsekView({ schoolId: initialSchoolId, onLogout }) {
         </div>
         <div className="flex items-center gap-2">
           <select value={schoolId} onChange={(e) => setSchoolId(e.target.value)} className="rounded-lg px-3 py-2 text-[13px]" style={{ border: `1px solid ${C.line}` }}>
-            {SCHOOLS.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            {allSchools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
           <button onClick={onLogout} className="text-[12.5px] font-semibold" style={{ color: C.brick }}>Keluar</button>
         </div>
