@@ -6,9 +6,14 @@
 //   POST /api/ai   { prompt: string, json?: boolean }   -> { text } | { json }
 
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/lib/authOptions";
 import { askGemini } from "@/lib/gemini";
 
 export async function POST(request) {
+  const session = await getServerSession(authOptions);
+  if (!session) return NextResponse.json({ error: "Silakan masuk terlebih dahulu." }, { status: 401 });
+
   try {
     const body = await request.json();
     const prompt = body?.prompt;
